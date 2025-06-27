@@ -1,13 +1,12 @@
+import { NodeTestHarness } from '@nodes-testing/node-test-harness';
 import type { Request } from 'express';
-import type { IWebhookFunctions } from 'n8n-workflow';
 import { mock } from 'jest-mock-extended';
-import { Webhook } from '../Webhook.node';
-import { testWorkflows, getWorkflowFilenames } from '@test/nodes/Helpers';
+import type { IWebhookFunctions } from 'n8n-workflow';
 
-const workflows = getWorkflowFilenames(__dirname);
+import { Webhook } from '../Webhook.node';
 
 describe('Test Webhook Node', () => {
-	testWorkflows(workflows);
+	new NodeTestHarness().setupTests();
 
 	describe('handleFormData', () => {
 		const node = new Webhook();

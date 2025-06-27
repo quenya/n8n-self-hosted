@@ -1,10 +1,10 @@
-const sharedOptions = require('@n8n_io/eslint-config/shared');
+const sharedOptions = require('@n8n/eslint-config/shared');
 
 /**
  * @type {import('@types/eslint').ESLint.ConfigData}
  */
 module.exports = {
-	extends: ['@n8n_io/eslint-config/node'],
+	extends: ['@n8n/eslint-config/node'],
 
 	...sharedOptions(__dirname),
 
@@ -15,7 +15,6 @@ module.exports = {
 		eqeqeq: 'warn',
 		'id-denylist': 'warn',
 		'import/extensions': 'warn',
-		'import/order': 'warn',
 		'prefer-spread': 'warn',
 		'import/no-extraneous-dependencies': 'warn',
 
@@ -154,6 +153,7 @@ module.exports = {
 			files: ['**/*.test.ts', '**/test/**/*.ts'],
 			rules: {
 				'import/no-extraneous-dependencies': 'off',
+				'n8n-nodes-base/node-filename-against-convention': 'off',
 			},
 		},
 	],

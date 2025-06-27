@@ -8,7 +8,7 @@ import type {
 } from 'n8n-workflow';
 import { ApplicationError, NodeOperationError } from 'n8n-workflow';
 import { utils as xlsxUtils } from 'xlsx';
-import { apiRequest } from '../transport';
+
 import type {
 	ILookupValues,
 	ISheetUpdateData,
@@ -21,6 +21,7 @@ import type {
 	ValueRenderOption,
 } from './GoogleSheets.types';
 import { getSheetId, removeEmptyColumns } from './GoogleSheets.utils';
+import { apiRequest } from '../transport';
 
 export class GoogleSheet {
 	id: string;
@@ -650,12 +651,14 @@ export class GoogleSheet {
 		dataStartRowIndex,
 		lookupValues,
 		returnAllMatches,
+		nodeVersion,
 		combineFilters = 'OR',
 	}: {
 		inputData: string[][];
 		keyRowIndex: number;
 		dataStartRowIndex: number;
 		lookupValues: ILookupValues[];
+		nodeVersion: number;
 		returnAllMatches?: boolean;
 		combineFilters?: 'AND' | 'OR';
 	}): Promise<IDataObject[]> {
@@ -671,7 +674,7 @@ export class GoogleSheet {
 			keys.push(inputData[keyRowIndex][columnIndex] || `col_${columnIndex}`);
 		}
 
-		// Standardise values array, if rows is [[]], map it to [['']] (Keep the columns into consideration)
+		// Standardize values array, if rows is [[]], map it to [['']] (Keep the columns into consideration)
 		for (let rowIndex = 0; rowIndex < inputData?.length; rowIndex++) {
 			if (inputData[rowIndex].length === 0) {
 				for (let i = 0; i < keys.length; i++) {
@@ -717,6 +720,9 @@ export class GoogleSheet {
 						}
 
 						if (returnAllMatches !== true) {
+							if (nodeVersion >= 4.6) {
+								break lookupLoop;
+							}
 							continue lookupLoop;
 						}
 					}

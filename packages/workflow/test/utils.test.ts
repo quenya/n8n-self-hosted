@@ -1,5 +1,6 @@
-import { ALPHABET } from '@/Constants';
+import { ALPHABET } from '@/constants';
 import { ApplicationError } from '@/errors/application.error';
+import { ExecutionCancelledError } from '@/errors/execution-cancelled.error';
 import {
 	jsonParse,
 	jsonStringify,
@@ -8,6 +9,10 @@ import {
 	fileTypeFromMimeType,
 	randomInt,
 	randomString,
+	hasKey,
+	isSafeObjectProperty,
+	setSafeObjectProperty,
+	sleepWithAbort,
 } from '@/utils';
 
 describe('isObjectEmpty', () => {
@@ -288,5 +293,171 @@ describe('randomString', () => {
 			const result = randomString(1000);
 			result.split('').every((char) => ALPHABET.includes(char));
 		});
+	});
+});
+
+type Expect<T extends true> = T;
+type Equal<X, Y> = (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2
+	? true
+	: false;
+
+describe('hasKey', () => {
+	it('should return false if the input is null', () => {
+		const x = null;
+		const result = hasKey(x, 'key');
+
+		expect(result).toEqual(false);
+	});
+	it('should return false if the input is undefined', () => {
+		const x = undefined;
+		const result = hasKey(x, 'key');
+
+		expect(result).toEqual(false);
+	});
+	it('should return false if the input is a number', () => {
+		const x = 1;
+		const result = hasKey(x, 'key');
+
+		expect(result).toEqual(false);
+	});
+	it('should return false if the input is an array out of bounds', () => {
+		const x = [1, 2];
+		const result = hasKey(x, 5);
+
+		expect(result).toEqual(false);
+	});
+
+	it('should return true if the input is an array within bounds', () => {
+		const x = [1, 2];
+		const result = hasKey(x, 1);
+
+		expect(result).toEqual(true);
+	});
+	it('should return true if the input is an array with the key `length`', () => {
+		const x = [1, 2];
+		const result = hasKey(x, 'length');
+
+		expect(result).toEqual(true);
+	});
+	it('should return false if the input is an array with the key `toString`', () => {
+		const x = [1, 2];
+		const result = hasKey(x, 'toString');
+
+		expect(result).toEqual(false);
+	});
+	it('should return false if the input is an object without the key', () => {
+		const x = { a: 3 };
+		const result = hasKey(x, 'a');
+
+		expect(result).toEqual(true);
+	});
+
+	it('should return true if the input is an object with the key', () => {
+		const x = { a: 3 };
+		const result = hasKey(x, 'b');
+
+		expect(result).toEqual(false);
+	});
+
+	it('should provide a type guard', () => {
+		const x: unknown = { a: 3 };
+		if (hasKey(x, '0')) {
+			const y: Expect<Equal<typeof x, Record<'0', unknown>>> = true;
+			y;
+		} else {
+			const z: Expect<Equal<typeof x, unknown>> = true;
+			z;
+		}
+	});
+});
+
+describe('isSafeObjectProperty', () => {
+	it.each([
+		['__proto__', false],
+		['prototype', false],
+		['constructor', false],
+		['getPrototypeOf', false],
+		['safeKey', true],
+		['anotherKey', true],
+		['toString', true],
+	])('should return %s for key "%s"', (key, expected) => {
+		expect(isSafeObjectProperty(key)).toBe(expected);
+	});
+});
+
+describe('setSafeObjectProperty', () => {
+	it.each([
+		['safeKey', 123, { safeKey: 123 }],
+		['__proto__', 456, {}],
+		['constructor', 'test', {}],
+	])('should set property "%s" safely', (key, value, expected) => {
+		const obj: Record<string, unknown> = {};
+		setSafeObjectProperty(obj, key, value);
+		expect(obj).toEqual(expected);
+	});
+});
+
+describe('sleepWithAbort', () => {
+	it('should resolve after the specified time when not aborted', async () => {
+		const start = Date.now();
+		await sleepWithAbort(100);
+		const end = Date.now();
+		const elapsed = end - start;
+
+		// Allow some tolerance for timing
+		expect(elapsed).toBeGreaterThanOrEqual(90);
+		expect(elapsed).toBeLessThan(200);
+	});
+
+	it('should reject immediately if abort signal is already aborted', async () => {
+		const abortController = new AbortController();
+		abortController.abort();
+
+		await expect(sleepWithAbort(1000, abortController.signal)).rejects.toThrow(
+			ExecutionCancelledError,
+		);
+	});
+
+	it('should reject when abort signal is triggered during sleep', async () => {
+		const abortController = new AbortController();
+
+		// Start the sleep and abort after 50ms
+		setTimeout(() => abortController.abort(), 50);
+
+		const start = Date.now();
+		await expect(sleepWithAbort(1000, abortController.signal)).rejects.toThrow(
+			ExecutionCancelledError,
+		);
+		const end = Date.now();
+		const elapsed = end - start;
+
+		// Should have been aborted after ~50ms, not the full 1000ms
+		expect(elapsed).toBeLessThan(200);
+	});
+
+	it('should work without abort signal', async () => {
+		const start = Date.now();
+		await sleepWithAbort(100, undefined);
+		const end = Date.now();
+		const elapsed = end - start;
+
+		expect(elapsed).toBeGreaterThanOrEqual(90);
+		expect(elapsed).toBeLessThan(200);
+	});
+
+	it('should clean up timeout when aborted during sleep', async () => {
+		const abortController = new AbortController();
+		const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
+
+		// Start the sleep and abort after 50ms
+		const sleepPromise = sleepWithAbort(1000, abortController.signal);
+		setTimeout(() => abortController.abort(), 50);
+
+		await expect(sleepPromise).rejects.toThrow(ExecutionCancelledError);
+
+		// clearTimeout should have been called to clean up
+		expect(clearTimeoutSpy).toHaveBeenCalled();
+
+		clearTimeoutSpy.mockRestore();
 	});
 });

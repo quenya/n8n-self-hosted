@@ -8,12 +8,12 @@ import type {
 } from '@langchain/core/load/serializable';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { LLMResult } from '@langchain/core/outputs';
-import { encodingForModel } from '@langchain/core/utils/tiktoken';
+import pick from 'lodash/pick';
 import type { IDataObject, ISupplyDataFunctions, JsonObject } from 'n8n-workflow';
-import { pick } from 'lodash';
-import { NodeConnectionType, NodeError, NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeError, NodeOperationError } from 'n8n-workflow';
 
-import { logAiEvent } from '../../utils/helpers';
+import { logAiEvent } from '@utils/helpers';
+import { encodingForModel } from '@utils/tokenizer/tiktoken';
 
 type TokensUsageParser = (llmOutput: LLMResult['llmOutput']) => {
 	completionTokens: number;
@@ -35,11 +35,13 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 	// This is crucial for the handleLLMError handler to work correctly (it should be called before the error is propagated to the root node)
 	awaitHandlers = true;
 
-	connectionType = NodeConnectionType.AiLanguageModel;
+	connectionType = NodeConnectionTypes.AiLanguageModel;
 
 	promptTokensEstimate = 0;
 
 	completionTokensEstimate = 0;
+
+	#parentRunIndex?: number;
 
 	/**
 	 * A map to associate LLM run IDs to run details.
@@ -61,11 +63,15 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 				totalTokens: completionTokens + promptTokens,
 			};
 		},
+		errorDescriptionMapper: (error: NodeError) => error.description,
 	};
 
 	constructor(
 		private executionFunctions: ISupplyDataFunctions,
-		options?: { tokensUsageParser: TokensUsageParser },
+		options?: {
+			tokensUsageParser?: TokensUsageParser;
+			errorDescriptionMapper?: (error: NodeError) => string;
+		},
 	) {
 		super();
 		this.options = { ...this.options, ...options };
@@ -137,9 +143,16 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 						return message;
 					});
 
-		this.executionFunctions.addOutputData(this.connectionType, runDetails.index, [
-			[{ json: { ...response } }],
-		]);
+		const sourceNodeRunIndex =
+			this.#parentRunIndex !== undefined ? this.#parentRunIndex + runDetails.index : undefined;
+
+		this.executionFunctions.addOutputData(
+			this.connectionType,
+			runDetails.index,
+			[[{ json: { ...response } }]],
+			undefined,
+			sourceNodeRunIndex,
+		);
 
 		logAiEvent(this.executionFunctions, 'ai-llm-generated-output', {
 			messages: parsedMessages,
@@ -150,19 +163,27 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 
 	async handleLLMStart(llm: Serialized, prompts: string[], runId: string) {
 		const estimatedTokens = await this.estimateTokensFromStringList(prompts);
+		const sourceNodeRunIndex =
+			this.#parentRunIndex !== undefined
+				? this.#parentRunIndex + this.executionFunctions.getNextRunIndex()
+				: undefined;
 
 		const options = llm.type === 'constructor' ? llm.kwargs : llm;
-		const { index } = this.executionFunctions.addInputData(this.connectionType, [
+		const { index } = this.executionFunctions.addInputData(
+			this.connectionType,
 			[
-				{
-					json: {
-						messages: prompts,
-						estimatedTokens,
-						options,
+				[
+					{
+						json: {
+							messages: prompts,
+							estimatedTokens,
+							options,
+						},
 					},
-				},
+				],
 			],
-		]);
+			sourceNodeRunIndex,
+		);
 
 		// Save the run details for later use when processing `handleLLMEnd` event
 		this.runsMap[runId] = {
@@ -192,6 +213,10 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 		}
 
 		if (error instanceof NodeError) {
+			if (this.options.errorDescriptionMapper) {
+				error.description = this.options.errorDescriptionMapper(error);
+			}
+
 			this.executionFunctions.addOutputData(this.connectionType, runDetails.index, error);
 		} else {
 			// If the error is not a NodeError, we wrap it in a NodeOperationError
@@ -209,5 +234,10 @@ export class N8nLlmTracing extends BaseCallbackHandler {
 			runId,
 			parentRunId,
 		});
+	}
+
+	// Used to associate subsequent runs with the correct parent run in subnodes of subnodes
+	setParentRunIndex(runIndex: number) {
+		this.#parentRunIndex = runIndex;
 	}
 }
